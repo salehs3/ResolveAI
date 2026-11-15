@@ -4,6 +4,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 import os
 from dotenv import load_dotenv
+from complaint_extractor import extract_complaint, ComplaintDetails
+from resolve_agent import ask_resolveai
+from openai import RateLimitError, APIConnectionError, APITimeoutError
 
 load_dotenv()
 import asyncio
@@ -157,6 +160,41 @@ async def get_case_details(case_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404,detail="External order or shipment not found")
            else:
             raise HTTPException(status_code=502,detail="External service returned an error")
+
+class ComplaintRequest(BaseModel):
+    complaint : str
+
+@app.post("/complaints/extract",response_model=ComplaintDetails)
+def extcomplaint(request:ComplaintRequest):
+    result = extract_complaint(request.complaint)
+    return result
+
+class AgentRequest(BaseModel):
+    question:str
+
+@app.post("/agent/ask")
+def askagent(request:AgentRequest):
+    answer = ask_resolveai(request.question)
+    return {"answer":answer}
+
+@app.post("/complaints/resolve")
+def complaintagent(request:ComplaintRequest):
+    try:
+        comp = extract_complaint(request.complaint)
+        if comp.order_id is None:
+            return {"complaint":comp,"answer":"Please provide a valid order id"}
+        ans = ask_resolveai(request.complaint)
+
+        return {"complaint": comp, "answer": ans}
+    except RateLimitError:
+        raise HTTPException(status_code=503,detail="AI service temporarily unavailable")
+    except APITimeoutError:
+            raise HTTPException(status_code=504,detail="AI service timed out")
+    except APIConnectionError:
+        raise HTTPException(status_code=503,detail="Unable to connect to AI service")   
+    except ValueError:
+        raise HTTPException(status_code=502,detail="Invalid AI response") 
+
            
            
 
